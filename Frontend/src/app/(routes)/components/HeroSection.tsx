@@ -1,7 +1,9 @@
 import Image from "next/image";
 import React from "react";
 import HeroImage from "@/assets/HeroImage.png";
+import HeroImage2 from "@/assets/HeroImage-2.jpg";
 import { IoPhonePortraitOutline } from "react-icons/io5";
+import { FaHome } from "react-icons/fa";
 const HeroSection = () => {
   return (
     <div className="flex justify-end">
@@ -21,7 +23,18 @@ const HeroSection = () => {
           </div>
         </div>
 
-        <div className="w-[70%] flex justify-end">
+        <div className="w-[70%] relative flex justify-end">
+          <div className="absolute left-0 top-5 size-[100px] rounded-full bg-white flex justify-center items-center">
+            <FaHome color="#FF460D" size={50} />
+          </div>
+          <div className="absolute top-0 left-0 w-[474px] flex justify-center items-center rounded-full h-[474px] bg-[#1D4ED8]">
+            <Image
+              className="size-[398px] rounded-full"
+              src={HeroImage2}
+              alt="HeroImage2"
+            />
+          </div>
+
           <Image src={HeroImage} alt="HeroImage" />
         </div>
       </div>
