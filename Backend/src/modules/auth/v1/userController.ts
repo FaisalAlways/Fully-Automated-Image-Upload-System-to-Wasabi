@@ -5,17 +5,24 @@ import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
-import emailVerificationOtpTemplat from "../templates/emailVerificationOtpTemplate";
-import resetPasswordTemplate from "../templates/resetPasswordOtpTemplate";
+import emailVerificationOtpTemplat from "../../../templates/emailVerificationOtpTemplate";
+import resetPasswordTemplate from "../../../templates/resetPasswordOtpTemplate";
 const prisma = new PrismaClient();
+import { SignUpInput } from "../../../schemas/auth.schema";
+import {
+  isLocked,
+  recordFailedAttempt,
+  resetAttempts,
+} from "../../../utils/loginRateLimit";
 
 // Create a new user and send verification email
 export const signUpByEmail = async (req: Request, res: Response) => {
-  const { firstName, lastName, email, password } = req.body;
+  const { firstName, lastName, email, phone, password } =
+    req.body as SignUpInput;
 
   try {
     // Validate input
-    if (!firstName || !lastName || !email || !password) {
+    if (!firstName || !lastName || !email || !phone || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
@@ -24,8 +31,9 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       where: { email },
     });
     if (existingUser) {
-      return res.status(400).json({
-        error: "An account might already exist. Please try logging in.",
+      return res.status(409).json({
+        status: "fail",
+        error: " An account already exists. Please try logging in.",
       });
     }
 
@@ -38,9 +46,11 @@ export const signUpByEmail = async (req: Request, res: Response) => {
         firstName,
         lastName,
         email,
+        phone,
         password: passwordHashing,
         isEmailVerified: false,
       },
+      select: { id: true, firstName: true, lastName: true, email: true },
     });
 
     // Generate and store the token
@@ -70,7 +80,7 @@ export const signUpByEmail = async (req: Request, res: Response) => {
 
     // Email content
     const mailOptions = {
-      from: `"Help Operation Institute" <${process.env.EMAIL_USERNAME}>`,
+      from: `"Home Khujun" <${process.env.EMAIL_USERNAME}>`,
       to: email,
       subject: "Verify Your Email",
       html: emailVerificationOtpTemplat(firstName, verificationUrl),
@@ -81,13 +91,16 @@ export const signUpByEmail = async (req: Request, res: Response) => {
 
     // Log the email sending status
     res.status(201).json({
+      status: "success",
       message:
         "Account created successfully. Please check your email to verify your account.",
+      data: { user },
     });
     return;
   } catch (error) {
     console.error("Error creating user:", error);
     return res.status(500).json({
+      status: "error",
       message: "Something went wrong. Please try again later.",
     });
   }
@@ -96,10 +109,6 @@ export const signUpByEmail = async (req: Request, res: Response) => {
 // Verify email using the token sent to the user's email
 export const verifyEmail = async (req: Request, res: Response) => {
   const { token } = req.body;
-
-  if (!token) {
-    return res.status(400).json({ message: "Token missing" });
-  }
 
   // Find user with the verification token
   try {
@@ -129,7 +138,7 @@ export const verifyEmail = async (req: Request, res: Response) => {
       where: { userId: user.id, tokenType: "EMAIL_VERIFICATION" },
     });
 
-    console.log("Email verified successfully for user:", user.email);
+    console.log(`Email verified successfully for user: ${user.email}`);
     return res.status(200).json({ message: "Email verified successfully" });
   } catch (error) {
     console.error("Verification error:", error);
@@ -138,73 +147,91 @@ export const verifyEmail = async (req: Request, res: Response) => {
 };
 
 // Login user and generate access and refresh tokens
-export const logininByEmail = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  const user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    return res
-      .status(401)
-      .json({ error: "User is not found please create an account." });
+export const loginByEmail = async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    if (isLocked(email)) {
+      return res.status(429).json({
+        status: "fail",
+        error: "Too many failed attempts. Please try again in 3 minutes.",
+      });
+    }
+
+    // Find user by email
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(401).json({
+        status: "fail",
+        message: "User not found. Please register first.",
+      });
+    }
+
+    // Check email verification
+    if (!user.isEmailVerified) {
+      return res.status(403).json({
+        status: "fail",
+        message: "Email not verified. Please verify your email.",
+      });
+    }
+
+    // Validate password
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      recordFailedAttempt(email);
+      return res.status(401).json({
+        status: "fail",
+        message: "Invalid email or password.",
+      });
+    }
+
+    resetAttempts(email);
+
+    // JWT Payload
+    const payload = {
+      id: user.id,
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`,
+    };
+
+    // Check secret keys
+    const accessSecret = process.env.ACCESS_TOKEN_SECRET_KEY;
+    const refreshSecret = process.env.REFRESH_TOKEN_SECRET_KEY;
+    if (!accessSecret || !refreshSecret) {
+      console.error("JWT secret keys are missing");
+      return res.status(500).json({
+        status: "error",
+        message: "Internal server error.",
+      });
+    }
+
+    // Generate tokens
+    const accessToken = jwt.sign(payload, accessSecret, { expiresIn: "15m" });
+    const refreshToken = jwt.sign(payload, refreshSecret, { expiresIn: "7d" });
+
+    // Set HTTP-only refresh token cookie
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    // Respond with access token
+    return res.status(200).json({
+      status: "success",
+      message: "Logged in successfully.",
+      data: {
+        accessToken,
+      },
+    });
+  } catch (error) {
+    console.error("Login error:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Something went wrong. Please try again later.",
+    });
   }
-
-  // Check if email is verified
-  console.log("User email verification status:", user.isEmailVerified);
-  if (!user.isEmailVerified) {
-    return res
-      .status(403)
-      .json({ error: "Please verify your email before logging in." });
-  }
-
-  //  Check password
-  const isPasswordValid = await bcrypt.compare(password, user.password);
-  if (!isPasswordValid) {
-    return res.status(401).json({ error: "Invalid Credentials" });
-  }
-
-  // Create tokens
-  const payload = {
-    id: user.id,
-    email: user.email,
-    name: `${user.firstName} ${user.lastName}`,
-  };
-  console.log(payload, "JWT Payload generated");
-
-  // Check if secret keys are defined
-  if (
-    !process.env.ACCESS_TOKEN_SECRET_KEY ||
-    !process.env.REFRESH_TOKEN_SECRET_KEY
-  ) {
-    throw new Error("Access or Refresh token secret key is not defined");
-  }
-  // Generate access token and expires in 5 seconds
-  const accessToken = jwt.sign(
-    payload,
-    process.env.ACCESS_TOKEN_SECRET_KEY,
-    { expiresIn: "15m" } // 15 minutes
-  );
-  console.log(accessToken, "Access Token generated:");
-
-  // Generate refresh token and expires in 7 days
-  const refreshToken = jwt.sign(
-    payload,
-    process.env.REFRESH_TOKEN_SECRET_KEY,
-    { expiresIn: "7d" } // 7 days
-  );
-  console.log(refreshToken, "Refresh Token generated:");
-
-  // Set refresh token in HTTP-only cookie
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: false,
-    sameSite: "lax",
-    expires: new Date(Date.now() + 1000 * 60 * 60 * 24 * 7), // 7 days
-  });
-  console.log("Refresh token set in HTTP-only cookie");
-
-  // Send response with user data and tokens
-  return res.status(200).json({
-    accessToken,
-  });
 };
 
 // Generate new access token after expiresIn
@@ -468,42 +495,5 @@ export const setNewPassword = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error resetting password:", error);
     return res.status(500).json({ message: "Internal Server Error" });
-  }
-};
-
-export const getAllUser = async (req: Request, res: Response) => {
-  try {
-    // Get role from header 'x-user-role'
-    const userRole = req.headers["x-user-role"];
-
-    if (!userRole || userRole !== "admin") {
-      return res.status(403).json({
-        success: false,
-        message: "Access denied. Admins only.",
-      });
-    }
-
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        role: true,
-        createdAt: true,
-      },
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Users fetched successfully",
-      data: users,
-    });
-  } catch (error: any) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch users",
-      error: error.message,
-    });
   }
 };

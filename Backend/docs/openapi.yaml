@@ -1,0 +1,206 @@
+openapi: 3.0.3
+info:
+  title: REST API DESIGN
+  version: 1.0.0
+  description: RESTful authentication services providing secure user signup, login, email verification, and password recovery workflows.
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development server
+
+paths:
+  /auth/signup:
+    post:
+      tags:
+        - Registration
+      summary: User registration
+      description: Creates a new user account, stores encrypted password, and sends an email verification link.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - firstName
+                - lastName
+                - email
+                - phone
+                - password
+              properties:
+                firstName:
+                  type: string
+                  example: Eftakhar Alam
+                lastName:
+                  type: string
+                  example: Noor
+                email:
+                  type: string
+                  format: email
+                  example: eftakharalamnoor@gmail.com
+                phone:
+                  type: string
+                  example: "+880 1903-253618"
+                password:
+                  type: string
+                  format: password
+                  example: NOor125@$435efe
+      responses:
+        "201":
+          description: User registered successfully.
+          content:
+            application/json:
+              example:
+                message: Account created successfully. Please check your email to verify your account.
+        "400":
+          description: Bad request - missing required fields or invalid data.
+          content:
+            application/json:
+              example:
+                error: All fields are required.
+        "409":
+          description: Conflict - Email already exists.
+          content:
+            application/json:
+              example:
+                error: An account already exists. Please try logging in.
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              example:
+                error: Something went wrong. Please try again later.
+
+  /auth/verify-email:
+    post:
+      tags:
+        - Email Verify
+      summary: Verify user email using token
+      description: Verifies a user's email address by validating the token sent to their email.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  example: "a1b2c3d4e5f6g7h8i9j0"
+      responses:
+        "200":
+          description: Email verified successfully
+          content:
+            application/json:
+              example:
+                message: Email verified successfully
+        "400":
+          description: Invalid or missing token, or email already verified
+          content:
+            application/json:
+              examples:
+                missingToken:
+                  summary: Token missing in request
+                  value:
+                    message: Token missing
+                invalidToken:
+                  summary: Token invalid or expired
+                  value:
+                    message: Invalid or expired token
+                alreadyVerified:
+                  summary: Email already verified
+                  value:
+                    message: Email already verified
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                message: Internal server error
+
+  /auth/login:
+    post:
+      tags:
+        - Login User
+      summary: User login using email
+      description: Authenticate user by email and password, return access token and set refresh token cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: johndoe@example.com
+                password:
+                  type: string
+                  format: password
+                  example: MyStrongP@ss123
+      responses:
+        "200":
+          description: Login successful, returns access token and sets refresh token cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  message:
+                    type: string
+                    example: Login successful
+        "400":
+          description: Bad request - validation error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Email must be a valid email address
+        "401":
+          description: Unauthorized - user not found or invalid credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Invalid credentials.
+        "403":
+          description: Forbidden - email not verified.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Please verify your email before logging in.
+          "429":
+  description: Too many failed attempts. Please try again later.
+  content:
+    application/json:
+      example:
+        error: Too many failed attempts. Try again in 10 minutes.
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Internal server error

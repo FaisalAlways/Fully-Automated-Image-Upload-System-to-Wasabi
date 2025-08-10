@@ -10,12 +10,10 @@ datasource db {
 enum TokenType {
   EMAIL_VERIFICATION
   PASSWORD_RESET
-  OTHER
 }
 
 enum OtpType {
   PASSWORD_RESET
-  OTHER
 }
 
 // ==========================
@@ -26,6 +24,7 @@ model User {
   firstName       String
   lastName        String
   email           String   @unique
+  phone           String
   password        String
   isEmailVerified Boolean  @default(false)
   role            String   @default("guest")
@@ -61,68 +60,4 @@ model Otp {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-}
-
-// ===============================
-//          Department Model
-// ===============================
-model Department {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
-  course    Course[]
-  tressId  String @default(uuid()) 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// ===============================
-//          Department Model
-// ===============================
-model Course {
-  id             String          @id @default(uuid())
-  title          String
-  departmentId   String
-  department     Department      @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  courseOverview CourseOverview?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-}
-
-// ============================
-//   Course Overview Model
-// ============================
-model CourseOverview {
-  id                    String                  @id @default(uuid())
-  description           String
-  courseId              String                  @unique
-  course                Course                  @relation(fields: [courseId], references: [id])
-  WhoWillTakeThisCourse WhoWillTakeThisCourse[]
-  CourseOutcome         CourseOutcome[]
-  createdAt             DateTime                @default(now())
-  updatedAt             DateTime                @updatedAt
-}
-
-// ======================================
-//   Who Will Take This Course Model
-// ======================================
-model WhoWillTakeThisCourse {
-  id               String         @id @default(uuid())
-  title            String
-  CourseOverviewId String         @unique
-  CourseOverview   CourseOverview @relation(fields: [CourseOverviewId], references: [id])
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-}
-
-// ====================================
-//   Course Outcome Model
-// ====================================
-model CourseOutcome {
-  id               String         @id @default(uuid())
-  title            String
-  CourseOverviewId String         @unique
-  CourseOverview   CourseOverview @relation(fields: [CourseOverviewId], references: [id])
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
 }
