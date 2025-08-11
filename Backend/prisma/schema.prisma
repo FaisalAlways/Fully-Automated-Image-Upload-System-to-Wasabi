@@ -20,18 +20,22 @@ enum OtpType {
 //         User Model
 // ==========================
 model User {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   firstName       String
   lastName        String
-  email           String   @unique
+  email           String    @unique
   phone           String
   password        String
-  isEmailVerified Boolean  @default(false)
-  role            String   @default("guest")
+  isEmailVerified Boolean   @default(false)
+  isDisabled      Boolean   @default(false)
+  failedAttempts  Int       @default(0)
+  blockCount      Int       @default(0)
+  blockedUntil    DateTime?
+  role            String    @default("guest")
   token           Token[]
   otp             Otp[]
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 // ==========================

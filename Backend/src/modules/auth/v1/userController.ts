@@ -9,11 +9,6 @@ import emailVerificationOtpTemplat from "../../../templates/emailVerificationOtp
 import resetPasswordTemplate from "../../../templates/resetPasswordOtpTemplate";
 const prisma = new PrismaClient();
 import { SignUpInput } from "../../../schemas/auth.schema";
-import {
-  isLocked,
-  recordFailedAttempt,
-  resetAttempts,
-} from "../../../utils/loginRateLimit";
 
 // Create a new user and send verification email
 export const signUpByEmail = async (req: Request, res: Response) => {
@@ -23,7 +18,9 @@ export const signUpByEmail = async (req: Request, res: Response) => {
   try {
     // Validate input
     if (!firstName || !lastName || !email || !phone || !password) {
-      return res.status(400).json({ message: "All fields are required" });
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "All fields are required" });
     }
 
     // Check if email already exists
@@ -32,7 +29,7 @@ export const signUpByEmail = async (req: Request, res: Response) => {
     });
     if (existingUser) {
       return res.status(409).json({
-        status: "fail",
+        status: "Fail",
         error: " An account already exists. Please try logging in.",
       });
     }
@@ -61,7 +58,7 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       data: {
         token,
         tokenType: "EMAIL_VERIFICATION",
-        expiresAt: new Date(Date.now() + 1000 * 60 * 5),
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
         userId: user.id,
       },
     });
@@ -91,7 +88,7 @@ export const signUpByEmail = async (req: Request, res: Response) => {
 
     // Log the email sending status
     res.status(201).json({
-      status: "success",
+      status: "Success",
       message:
         "Account created successfully. Please check your email to verify your account.",
       data: { user },
@@ -100,7 +97,7 @@ export const signUpByEmail = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Error creating user:", error);
     return res.status(500).json({
-      status: "error",
+      status: "Error",
       message: "Something went wrong. Please try again later.",
     });
   }
@@ -118,13 +115,17 @@ export const verifyEmail = async (req: Request, res: Response) => {
     });
 
     if (!tokenRecord || tokenRecord.tokenType !== "EMAIL_VERIFICATION") {
-      return res.status(400).json({ message: "Invalid or expired token" });
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "Invalid or expired token" });
     }
     const user = tokenRecord.user;
 
     // Check email verification status
     if (user.isEmailVerified) {
-      return res.status(400).json({ message: "Email already verified" });
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "Email already verified" });
     }
 
     // Update user email verification status
@@ -138,11 +139,11 @@ export const verifyEmail = async (req: Request, res: Response) => {
       where: { userId: user.id, tokenType: "EMAIL_VERIFICATION" },
     });
 
-    console.log(`Email verified successfully for user: ${user.email}`);
     return res.status(200).json({ message: "Email verified successfully" });
   } catch (error) {
-    console.error("Verification error:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ status: "Error", message: "Internal server error" });
   }
 };
 
@@ -151,18 +152,17 @@ export const loginByEmail = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
-    if (isLocked(email)) {
-      return res.status(429).json({
-        status: "fail",
-        error: "Too many failed attempts. Please try again in 3 minutes.",
-      });
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "Email and Password required" });
     }
 
     // Find user by email
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(401).json({
-        status: "fail",
+        status: "Fail",
         message: "User not found. Please register first.",
       });
     }
@@ -170,22 +170,18 @@ export const loginByEmail = async (req: Request, res: Response) => {
     // Check email verification
     if (!user.isEmailVerified) {
       return res.status(403).json({
-        status: "fail",
+        status: "Fail",
         message: "Email not verified. Please verify your email.",
       });
     }
 
-    // Validate password
+    // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password);
     if (!isPasswordValid) {
-      recordFailedAttempt(email);
-      return res.status(401).json({
-        status: "fail",
-        message: "Invalid email or password.",
-      });
+      return res
+        .status(401)
+        .json({ status: "Fail", message: "Invalid Credentials" });
     }
-
-    resetAttempts(email);
 
     // JWT Payload
     const payload = {
@@ -198,9 +194,8 @@ export const loginByEmail = async (req: Request, res: Response) => {
     const accessSecret = process.env.ACCESS_TOKEN_SECRET_KEY;
     const refreshSecret = process.env.REFRESH_TOKEN_SECRET_KEY;
     if (!accessSecret || !refreshSecret) {
-      console.error("JWT secret keys are missing");
       return res.status(500).json({
-        status: "error",
+        status: "Error",
         message: "Internal server error.",
       });
     }
@@ -219,7 +214,7 @@ export const loginByEmail = async (req: Request, res: Response) => {
 
     // Respond with access token
     return res.status(200).json({
-      status: "success",
+      status: "Success",
       message: "Logged in successfully.",
       data: {
         accessToken,
@@ -228,7 +223,7 @@ export const loginByEmail = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Login error:", error);
     return res.status(500).json({
-      status: "error",
+      status: "Error",
       message: "Something went wrong. Please try again later.",
     });
   }
@@ -236,36 +231,37 @@ export const loginByEmail = async (req: Request, res: Response) => {
 
 // Generate new access token after expiresIn
 export const refreshToken = async (req: Request, res: Response) => {
-  const cookies = req.cookies;
-
-  const refreshToken = cookies?.refreshToken;
-
-  if (!refreshToken) {
-    return res
-      .status(401)
-      .json({ message: "Unauthorized: No refresh token provided" });
-  }
   try {
-    // Verify refresh token
+    const cookies = req.cookies;
+    const refreshToken = cookies?.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({
+        status: "Fail",
+        message: "Unauthorized: No refresh token provided",
+      });
+    }
+
     const decoded = jwt.verify(
       refreshToken,
       process.env.REFRESH_TOKEN_SECRET_KEY as string
     ) as jwt.JwtPayload;
 
-    //Find the user in database
-    const foundUser = await prisma.user.findFirst({
+    const foundUser = await prisma.user.findUnique({
       where: { email: decoded.email },
     });
-    console.log(foundUser);
+
     if (!foundUser) {
-      res.clearCookie("refresh_token", {
+      res.clearCookie("refreshToken", {
         httpOnly: true,
-        secure: true,
-        sameSite: "none",
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
       });
-      res.status(401).json({ message: "Unauthorized: User not found" });
-      return;
+      return res
+        .status(401)
+        .json({ status: "Fail", message: "Unauthorized: User not found" });
     }
+
     const accessToken = jwt.sign(
       {
         id: foundUser.id,
@@ -276,39 +272,40 @@ export const refreshToken = async (req: Request, res: Response) => {
       { expiresIn: "15m" }
     );
 
-    res
-      .status(200)
-      .json({ message: "Access token renewed successfully", accessToken });
-    return;
-  } catch (err) {
-    console.error("Error verifying refresh token:", err);
-    res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: true,
-      sameSite: "none",
+    return res.status(200).json({
+      status: "Success",
+      message: "Access token renewed successfully",
+      accessToken,
     });
-    res
-      .status(401)
-      .json({ message: "Unauthorized: Refresh token expired or invalid" });
-    return;
+  } catch (err) {
+    console.error("Error in refreshToken:", err);
+    // Could differentiate error types here if needed
+    return res.status(500).json({
+      status: "Error",
+      message: "Internal server error",
+    });
   }
 };
 
 // Reset Password OTP For Email
 export const resetPasswordEmailOtp = async (req: Request, res: Response) => {
-  const { email } = req.body;
-  const now = new Date();
-
   try {
+    const { email } = req.body;
+    const now = new Date();
+
     if (!email) {
-      return res.status(400).json({ message: "Email is required." });
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "Email is required." });
     }
 
     // Find user
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ status: "Fail", message: "User not found" });
     }
 
     // Check if OTP already exists and not expired
@@ -316,20 +313,25 @@ export const resetPasswordEmailOtp = async (req: Request, res: Response) => {
       where: {
         userId: user.id,
         otpType: "PASSWORD_RESET",
-        expiresAt: {
-          gt: now,
-        },
       },
     });
 
     // Block if new OTP request is made within valid time
     if (existingOtp) {
-      const remaining = Math.floor(
-        (existingOtp.expiresAt.getTime() - now.getTime()) / 1000
-      );
-      return res.status(429).json({
-        message: `Please wait ${remaining} seconds before requesting a new OTP.`,
-      });
+      const timeDiff = existingOtp.expiresAt.getTime() - now.getTime();
+
+      if (timeDiff > 0) {
+        const remaining = Math.ceil(timeDiff / 1000);
+        return res.status(429).json({
+          status: "Fail",
+          message: `Please wait ${remaining} seconds before requesting a new OTP.`,
+        });
+      } else {
+        // OTP is expired, so remove it before creating a new one
+        await prisma.otp.delete({
+          where: { id: existingOtp.id },
+        });
+      }
     }
 
     // Delete any previous expired OTPs for this user and type
@@ -341,7 +343,7 @@ export const resetPasswordEmailOtp = async (req: Request, res: Response) => {
     });
 
     // Generate a secure 4-digit OTP
-    const otp = (crypto.randomBytes(4).readUInt32BE(0) % 9000) + 1000;
+    const otp = (crypto.randomBytes(6).readUInt32BE(0) % 900000) + 100000;
     const expiresAt = new Date(Date.now() + 1000 * 60 * 3); // 3 minutes from now
 
     // Store OTP in database
@@ -373,20 +375,28 @@ export const resetPasswordEmailOtp = async (req: Request, res: Response) => {
 
     await transporter.sendMail(mailOptions);
 
-    return res.status(200).json({ message: "Reset code sent to email" });
+    return res
+      .status(200)
+      .json({ status: "Success", message: "Reset code sent to email" });
   } catch (error) {
     console.error("Error in resetPasswordEmailOtp:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ status: "Error", message: "Internal server error" });
   }
 };
 
 // Verified Email OTP handler function
 export const verifiedEmailOtp = async (req: Request, res: Response) => {
-  const { email, otp } = req.body;
-
   try {
+    const { email, otp } = req.body;
+    const now = new Date();
+
     if (!email || !otp) {
-      return res.status(400).json({ message: "Email and OTP required" });
+      return res.status(400).json({
+        status: "Fail",
+        message: "Email and OTP required",
+      });
     }
 
     // Find user
@@ -395,7 +405,10 @@ export const verifiedEmailOtp = async (req: Request, res: Response) => {
     });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({
+        status: "Fail",
+        message: "User not found",
+      });
     }
 
     // Find latest non-expired OTP entry
@@ -407,10 +420,13 @@ export const verifiedEmailOtp = async (req: Request, res: Response) => {
     });
 
     if (!userOtp || userOtp.otp !== Number(otp)) {
-      return res.status(400).json({ message: "Invalid or expired OTP" });
+      return res.status(400).json({
+        status: "Fail",
+        message: "Invalid or expired OTP",
+      });
     }
 
-    // Generate password reset token
+    // Generate a reset token (valid for 1 hour)
     const resetToken = uuidv4();
     const expiration = new Date(Date.now() + 1000 * 60 * 60); // 1 hour expiry
 
@@ -434,38 +450,51 @@ export const verifiedEmailOtp = async (req: Request, res: Response) => {
 
     return res.status(200).json({
       resetToken,
+      status: "success",
       message:
         "OTP verified successfully. Use this token to reset your password.",
     });
   } catch (error) {
-    console.error("Error verifying OTP:", error);
-    return res.status(500).json({ message: "Internal server error" });
+    console.error("Error in verifyPasswordResetOtp:", error);
+    return res.status(500).json({
+      status: "Error",
+      message: "Internal server error",
+    });
   }
 };
 
 // Set New Password
 export const setNewPassword = async (req: Request, res: Response) => {
-  const { email, token, password, confirmPassword } = req.body;
-
   try {
+    const { email, token, password, confirmPassword } = req.body;
+
     // Input validation
     if (!email || !password || !confirmPassword || !token) {
-      return res.status(400).json({ message: "All fields are required" });
+      return res.status(400).json({
+        status: "Fail",
+        message: "All fields are required",
+      });
     }
 
     if (password !== confirmPassword) {
-      return res.status(400).json({ message: "Passwords do not match" });
+      return res.status(400).json({
+        status: "Fail",
+        message: "Passwords do not match",
+      });
     }
 
     // Find user by email
     const user = await prisma.user.findUnique({ where: { email } });
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({
+        status: "Fail",
+        message: "User not found",
+      });
     }
 
     const userToken = await prisma.token.findFirst({
-      where: { userId: user.id },
+      where: { userId: user.id, tokenType: "PASSWORD_RESET" },
     });
     console.log(userToken, "userToken");
     // Check if token is valid
@@ -474,7 +503,10 @@ export const setNewPassword = async (req: Request, res: Response) => {
       userToken.token !== token ||
       userToken.expiresAt! < new Date()
     ) {
-      return res.status(400).json({ message: "Invalid or expired token" });
+      return res.status(400).json({
+        status: "Fail",
+        message: "Invalid or expired token",
+      });
     }
 
     // Hash new password
@@ -491,9 +523,14 @@ export const setNewPassword = async (req: Request, res: Response) => {
       where: { userId: user.id, tokenType: "PASSWORD_RESET" },
     });
 
-    return res.status(200).json({ message: "Password reset successfully" });
+    return res
+      .status(200)
+      .json({ status: "Success", message: "Password reset successfully" });
   } catch (error) {
-    console.error("Error resetting password:", error);
-    return res.status(500).json({ message: "Internal Server Error" });
+    console.error("Error in setNewPassword:", error);
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error",
+    });
   }
 };

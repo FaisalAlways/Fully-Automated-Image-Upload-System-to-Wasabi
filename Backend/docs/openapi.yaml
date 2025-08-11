@@ -8,6 +8,16 @@ servers:
   - url: http://localhost:8000/api/v1
     description: Local development server
 
+# security:
+#   - bearerAuth: []
+
+# components:
+#   securitySchemes:
+#     bearerAuth:
+#       type: http
+#       scheme: bearer
+#       bearerFormat: JWT
+
 paths:
   /auth/signup:
     post:
@@ -123,9 +133,10 @@ paths:
   /auth/login:
     post:
       tags:
-        - Login User
-      summary: User login using email
-      description: Authenticate user by email and password, return access token and set refresh token cookie.
+        - User Login
+      summary: Login with Email and Password
+      description: |
+        Attempts to log in the user. Includes rate limiting and account disable logic.
       requestBody:
         required: true
         content:
@@ -139,68 +150,271 @@ paths:
                 email:
                   type: string
                   format: email
-                  example: johndoe@example.com
+                  example: user@example.com
+                password:
+                  type: string
+                  example: MyPassword123!
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              example:
+                status: success
+                message: Logged in successfully.
+                data:
+                  accessToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              example:
+                status: fail
+                message: Email and Password required
+        '401':
+          description: Wrong email or password
+          content:
+            application/json:
+              example:
+                status: fail
+                message: Invalid email or password.
+        '403':
+          description: Email not verified
+          content:
+            application/json:
+              example:
+                status: fail
+                message: Email not verified. Please verify your email.
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: error
+                message: Something went wrong. Please try again later.
+
+  /auth/refresh-token:
+    get:
+      tags:
+        - Refresh Token
+      summary: Generate a new access token using a valid refresh token
+      description: |
+        This endpoint verifies the refresh token cookie. If valid, it issues a new access token.
+        The refresh token is sent in an HTTP-only cookie named `refreshToken`.
+      responses:
+        200:
+          description: Access token renewed successfully
+          content:
+            application/json:
+              example:
+                message: Access token renewed successfully
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        401:
+          description: Unauthorized - No refresh token provided or invalid/expired token
+          content:
+            application/json:
+              examples:
+                noToken:
+                  summary: No refresh token provided
+                  value:
+                    message: Unauthorized: No refresh token provided
+                userNotFound:
+                  summary: User not found for the token
+                  value:
+                    message: Unauthorized: User not found
+                invalidToken:
+                  summary: Refresh token expired or invalid
+                  value:
+                    message: Unauthorized: Refresh token expired or invalid
+
+  /auth/reset-password-otp:
+    post:
+      tags:
+        - Password Reset
+      summary: Request a password reset OTP sent to email
+      description: |
+        Sends a secure 6-digit OTP to the user's email if the email exists and no valid OTP is already active.
+        Blocks repeated OTP requests for 3 minutes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+      responses:
+        '200':
+          description: Reset code sent successfully
+          content:
+            application/json:
+              example:
+                message: Reset code sent to email
+        '400':
+          description: Missing email in request
+          content:
+            application/json:
+              example:
+                status: Fail
+                message: Email is required.
+        '404':
+          description: User not found with provided email
+          content:
+            application/json:
+              example:
+                status: Fail
+                message: User not found
+        '429':
+          description: OTP request too frequent, wait before requesting again
+          content:
+            application/json:
+              example:
+                status: Fail
+                message: Please wait 120 seconds before requesting a new OTP.
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                message: Internal server error
+
+  /auth/verified-email-otp:
+    post:
+      tags:
+      - Verify email otp
+      summary: Verify password reset OTP
+      description: |
+        Validates a user's password reset OTP sent to their email.
+        If valid, returns a one-time token for resetting the password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - otp
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                otp:
+                  type: integer
+                  example: 123456
+      responses:
+        "200":
+          description: OTP verified successfully
+          content:
+            application/json:
+              example:
+                status: success
+                message: OTP verified successfully. Use this token to reset your password.
+                resetToken: "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+        "400":
+          description: Invalid request or OTP
+          content:
+            application/json:
+              examples:
+                missingFields:
+                  summary: Email or OTP missing
+                  value:
+                    status: fail
+                    message: Email and OTP are required
+                invalidOtp:
+                  summary: OTP invalid or expired
+                  value:
+                    status: fail
+                    message: Invalid or expired OTP
+        "404":
+          description: User not found
+          content:
+            application/json:
+              example:
+                status: fail
+                message: User not found
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              example:
+                status: error
+                message: Internal server error
+  
+  /auth/set-new-password:
+    post:
+      tags:
+      - Set a new password using reset token
+      summary: User Set His new password
+      description: |
+       Allows a user to set a new password if they have a valid password reset token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - otp
+                - password
+                - confirmPassword
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                token:
+                  type: integer
+                  example: 1b4e28ba-2fa1-11d2-883f-0016d3cca427
                 password:
                   type: string
                   format: password
-                  example: MyStrongP@ss123
+                  example: NewStrongPass123!#%$
+                confirmPassword:
+                  type: string
+                  format: password
+                  example: NewStrongPass123!#%$
       responses:
         "200":
-          description: Login successful, returns access token and sets refresh token cookie.
+          description: Password reset successfully
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  accessToken:
-                    type: string
-                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-                  message:
-                    type: string
-                    example: Login successful
+              example:
+                status: success
+                message: Password reset successfully.
         "400":
-          description: Bad request - validation error.
+          description: Invalid input or token
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Email must be a valid email address
-        "401":
-          description: Unauthorized - user not found or invalid credentials.
+              examples:
+                missingFields:
+                  summary: Missing required fields
+                  value:
+                    status: fail
+                    message: Email, token, password, and confirmPassword are required
+                invalidOtp:
+                  summary: OTP invalid or expired
+                  value:
+                    status: fail
+                    message: Invalid or expired OTP
+        "404":
+          description: User not found
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Invalid credentials.
-        "403":
-          description: Forbidden - email not verified.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Please verify your email before logging in.
-          "429":
-  description: Too many failed attempts. Please try again later.
-  content:
-    application/json:
-      example:
-        error: Too many failed attempts. Try again in 10 minutes.
+              example:
+                status: fail
+                message: User not found
         "500":
-          description: Internal server error.
+          description: Internal server error
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  error:
-                    type: string
-                    example: Internal server error
+              example:
+                status: error
+                message: Internal server error
