@@ -16,28 +16,22 @@ export const signUpByEmail = async (req: Request, res: Response) => {
     req.body as SignUpInput;
 
   try {
-    // Validate input
     if (!firstName || !lastName || !email || !phone || !password) {
       return res
         .status(400)
         .json({ status: "Fail", message: "All fields are required" });
     }
 
-    // Check if email already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(409).json({
         status: "Fail",
-        error: " An account already exists. Please try logging in.",
+        message: "An account already exists. Please try logging in.",
       });
     }
 
-    // Hash password
-    const passwordHashing = bcrypt.hashSync(password, 10);
+    const passwordHashing = await bcrypt.hash(password, 10);
 
-    // Create user
     const user = await prisma.user.create({
       data: {
         firstName,
@@ -50,23 +44,19 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       select: { id: true, firstName: true, lastName: true, email: true },
     });
 
-    // Generate and store the token
     const token = crypto.randomBytes(32).toString("hex");
 
-    // Store token in DB (create UserToken or similar model)
     await prisma.token.create({
       data: {
         token,
         tokenType: "EMAIL_VERIFICATION",
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24),
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24), // 24 hours
         userId: user.id,
       },
     });
 
-    // Construct verification URL — frontend is on port 5000, backend on 8000
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${token}`;
 
-    // Setup nodemailer transporter (make sure env variables are set)
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -75,7 +65,6 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       },
     });
 
-    // Email content
     const mailOptions = {
       from: `"Home Khujun" <${process.env.EMAIL_USERNAME}>`,
       to: email,
@@ -83,17 +72,14 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       html: emailVerificationOtpTemplat(firstName, verificationUrl),
     };
 
-    // Send the email
     await transporter.sendMail(mailOptions);
 
-    // Log the email sending status
-    res.status(201).json({
+    return res.status(201).json({
       status: "Success",
       message:
         "Account created successfully. Please check your email to verify your account.",
       data: { user },
     });
-    return;
   } catch (error) {
     console.error("Error creating user:", error);
     return res.status(500).json({
@@ -107,43 +93,124 @@ export const signUpByEmail = async (req: Request, res: Response) => {
 export const verifyEmail = async (req: Request, res: Response) => {
   const { token } = req.body;
 
-  // Find user with the verification token
   try {
-    const tokenRecord = await prisma.token.findUnique({
-      where: { token, tokenType: "EMAIL_VERIFICATION" },
+    const tokenRecord = await prisma.token.findFirst({
+      where: {
+        token,
+        tokenType: "EMAIL_VERIFICATION",
+        expiresAt: { gte: new Date() },
+      },
       include: { user: true },
     });
 
-    if (!tokenRecord || tokenRecord.tokenType !== "EMAIL_VERIFICATION") {
+    if (!tokenRecord) {
       return res
         .status(400)
         .json({ status: "Fail", message: "Invalid or expired token" });
     }
+
     const user = tokenRecord.user;
 
-    // Check email verification status
     if (user.isEmailVerified) {
       return res
         .status(400)
         .json({ status: "Fail", message: "Email already verified" });
     }
 
-    // Update user email verification status
     await prisma.user.update({
       where: { id: user.id },
       data: { isEmailVerified: true },
     });
 
-    // Deleting all user Token after verification
     await prisma.token.deleteMany({
       where: { userId: user.id, tokenType: "EMAIL_VERIFICATION" },
     });
 
-    return res.status(200).json({ message: "Email verified successfully" });
+    return res
+      .status(200)
+      .json({ status: "Success", message: "Email verified successfully" });
   } catch (error) {
+    console.error("Email verification error:", error);
     return res
       .status(500)
       .json({ status: "Error", message: "Internal server error" });
+  }
+};
+
+// Resend Verify email
+export const resendVerificationEmail = async (req: Request, res: Response) => {
+  const { email } = req.body;
+
+  try {
+    if (!email) {
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "Email is required" });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ status: "Fail", message: "User not found" });
+    }
+
+    if (user.isEmailVerified) {
+      return res
+        .status(400)
+        .json({ status: "Fail", message: "Email is already verified" });
+    }
+
+    // Delete any existing EMAIL_VERIFICATION tokens for this user
+    await prisma.token.deleteMany({
+      where: {
+        userId: user.id,
+        tokenType: "EMAIL_VERIFICATION",
+      },
+    });
+
+    // Generate new token
+    const token = crypto.randomBytes(32).toString("hex");
+
+    await prisma.token.create({
+      data: {
+        token,
+        tokenType: "EMAIL_VERIFICATION",
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24), // 24 hours
+        userId: user.id,
+      },
+    });
+
+    const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${token}`;
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USERNAME,
+        pass: process.env.EMAIL_PASSWORD,
+      },
+    });
+
+    const mailOptions = {
+      from: `"Home Khujun" <${process.env.EMAIL_USERNAME}>`,
+      to: email,
+      subject: "Verify Your Email",
+      html: emailVerificationOtpTemplat(user.firstName, verificationUrl),
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.status(200).json({
+      status: "Success",
+      message: "A new verification email has been sent.",
+    });
+  } catch (error) {
+    console.error("Error resending verification email:", error);
+    return res.status(500).json({
+      status: "Error",
+      message: "Something went wrong. Please try again later.",
+    });
   }
 };
 
@@ -218,6 +285,7 @@ export const loginByEmail = async (req: Request, res: Response) => {
       message: "Logged in successfully.",
       data: {
         accessToken,
+        refreshToken,
       },
     });
   } catch (error) {
@@ -233,7 +301,9 @@ export const loginByEmail = async (req: Request, res: Response) => {
 export const refreshToken = async (req: Request, res: Response) => {
   try {
     const cookies = req.cookies;
+    console.log(cookies, "cookies");
     const refreshToken = cookies?.refreshToken;
+    console.log(refreshToken, "AAAAAAAAAAAAA");
 
     if (!refreshToken) {
       return res.status(401).json({
@@ -279,7 +349,6 @@ export const refreshToken = async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error("Error in refreshToken:", err);
-    // Could differentiate error types here if needed
     return res.status(500).json({
       status: "Error",
       message: "Internal server error",
@@ -532,5 +601,31 @@ export const setNewPassword = async (req: Request, res: Response) => {
       status: "error",
       message: "Internal server error",
     });
+  }
+};
+
+// Logout user
+export const logout = async (req: Request, res: Response) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({ status: "fail", message: "Unauthorized." });
+    }
+
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: true,
+      sameSite: "strict",
+    });
+
+    return res
+      .status(200)
+      .json({ status: "success", message: "Logged out successfully." });
+  } catch (error) {
+    console.error("Logout error:", error);
+    return res
+      .status(500)
+      .json({ status: "error", message: "Internal server error" });
   }
 };

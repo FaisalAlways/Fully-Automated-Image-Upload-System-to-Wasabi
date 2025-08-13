@@ -7,11 +7,13 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import swaggerUi from "swagger-ui-express";
 import YAML from "yamljs";
 import path from "path";
+import cookieParser from 'cookie-parser';
 import { PrismaClient } from "@prisma/client";
 
 import mainRouter from "./routes";
 
 dotenv.config();
+
 
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 9000;
@@ -19,6 +21,7 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5000";
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:8000";
 
 const app = express();
+app.use(cookieParser());
 
 // Load Swagger document
 const swaggerDocument = YAML.load(path.join(__dirname, "../docs/openapi.yaml"));
@@ -171,3 +174,12 @@ app.listen(PORT, () => {
   console.log(`✅ Backend Server running at http://localhost:${PORT}`);
   console.log(`📚 API Docs available at http://localhost:${PORT}/api-docs`);
 });
+
+
+
+
+
+
+
+
+
