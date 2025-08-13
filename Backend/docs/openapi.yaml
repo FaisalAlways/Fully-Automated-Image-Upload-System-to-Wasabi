@@ -380,7 +380,7 @@ paths:
   /auth/resend-verification-email:
     post:
       tags:
-        - Resend verification email
+        - Email Verify
       summary: Resend verification email
       description: Sends a new verification email if the user’s email is not yet verified.
       requestBody:
