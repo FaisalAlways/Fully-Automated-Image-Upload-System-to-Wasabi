@@ -1,28 +1,62 @@
 import { PrismaClient } from "@prisma/client";
 import { Request, Response } from "express";
-import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import emailVerificationOtpTemplat from "../../../templates/emailVerificationOtpTemplate";
 import resetPasswordTemplate from "../../../templates/resetPasswordOtpTemplate";
+import argon2 from "argon2";
+import { z } from "zod";
+
 const prisma = new PrismaClient();
-import { SignUpInput } from "../../../schemas/auth.schema";
+
+// Zod validation schema
+const signUpSchema = z.object({
+  firstName: z.string().min(2, "First name must be at least 2 characters"),
+  lastName: z.string().min(2, "Last name must be at least 2 characters"),
+  email: z.email("Invalid email address"),
+  phone: z
+    .string()
+    .min(11, "Phone number must be at least 11 digits")
+    .max(15, "Phone number must be no more than 15 digits")
+    .regex(
+      /^\+?[0-9]+$/,
+      "Phone number must contain only digits and may start with +"
+    ),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters long")
+    .max(32, "Password must be at most 32 characters long")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+    .regex(/\d/, "Password must contain at least one number")
+    .regex(
+      /[!@#$%^&*(),.?":{}|<>_\-+=~`[\]\\;'/]/,
+      "Password must contain at least one special character (@, $, !, %, *, ?, &)"
+    ),
+});
 
 // Create a new user and send verification email
 export const signUpByEmail = async (req: Request, res: Response) => {
-  const { firstName, lastName, email, phone, password } =
-    req.body as SignUpInput;
+  const parsed = signUpSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      status: "Fail",
+      message: "Invalid input",
+      errors: z.treeifyError(parsed.error),
+    });
+  }
+
+  const { firstName, lastName, email, phone, password } = parsed.data;
+  const normalizedEmail = email.toLowerCase();
 
   try {
-    if (!firstName || !lastName || !email || !phone || !password) {
-      return res
-        .status(400)
-        .json({ status: "Fail", message: "All fields are required" });
-    }
+    //Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+    });
 
-    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(409).json({
         status: "Fail",
@@ -30,31 +64,40 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       });
     }
 
-    const passwordHashing = await bcrypt.hash(password, 10);
+    // Hash password with Argon2id
+    const hashedPassword = await argon2.hash(password, {
+      type: argon2.argon2id,
+      memoryCost: 2 ** 16,
+      timeCost: 3,
+      parallelism: 1,
+    });
 
+    // Create new user
     const user = await prisma.user.create({
       data: {
         firstName,
         lastName,
-        email,
+        email: normalizedEmail,
         phone,
-        password: passwordHashing,
+        password: hashedPassword,
         isEmailVerified: false,
       },
       select: { id: true, firstName: true, lastName: true, email: true },
     });
 
+    // Create email verification token
     const token = crypto.randomBytes(32).toString("hex");
 
     await prisma.token.create({
       data: {
         token,
         tokenType: "EMAIL_VERIFICATION",
-        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24), // 24 hours
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
         userId: user.id,
       },
     });
 
+    // Send verification email
     const verificationUrl = `${process.env.CLIENT_URL}/verify-email?token=${token}`;
 
     const transporter = nodemailer.createTransport({
@@ -67,13 +110,23 @@ export const signUpByEmail = async (req: Request, res: Response) => {
 
     const mailOptions = {
       from: `"Home Khujun" <${process.env.EMAIL_USERNAME}>`,
-      to: email,
+      to: normalizedEmail,
       subject: "Verify Your Email",
       html: emailVerificationOtpTemplat(firstName, verificationUrl),
     };
 
-    await transporter.sendMail(mailOptions);
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (emailError) {
+      console.error("Failed to send email", emailError);
+      return res.status(500).json({
+        status: "Error",
+        message:
+          "Account created, but failed to send verification email. Please try again later.",
+      });
+    }
 
+    // Respond success
     return res.status(201).json({
       status: "Success",
       message:
@@ -81,7 +134,7 @@ export const signUpByEmail = async (req: Request, res: Response) => {
       data: { user },
     });
   } catch (error) {
-    console.error("Error creating user:", error);
+    console.error("Error creating user", error);
     return res.status(500).json({
       status: "Error",
       message: "Something went wrong. Please try again later.",
@@ -242,12 +295,13 @@ export const loginByEmail = async (req: Request, res: Response) => {
       });
     }
 
-    // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    // Check password validity with argon2
+    const isPasswordValid = await argon2.verify(user.password, password);
     if (!isPasswordValid) {
-      return res
-        .status(401)
-        .json({ status: "Fail", message: "Invalid Credentials" });
+      return res.status(401).json({
+        status: "Fail",
+        message: "Invalid Credentials",
+      });
     }
 
     // JWT Payload
@@ -579,7 +633,13 @@ export const setNewPassword = async (req: Request, res: Response) => {
     }
 
     // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await argon2.hash(password, {
+      type: argon2.argon2id,
+      memoryCost: 2 ** 16,
+      timeCost: 3,
+      parallelism: 1,
+    });
+    console.log(hashedPassword, "hashedPassword");
 
     // Update user password
     await prisma.user.update({

@@ -174,11 +174,3 @@ app.listen(PORT, () => {
   console.log(`✅ Backend Server running at http://localhost:${PORT}`);
   console.log(`📚 API Docs available at http://localhost:${PORT}/api-docs`);
 });
-
-
-
-
-
-
-
-
