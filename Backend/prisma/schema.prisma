@@ -7,73 +7,11 @@ datasource db {
   url      = env("DATABASE_URL_POSTGRES")
 }
 
-enum TokenType {
-  EMAIL_VERIFICATION
-  PASSWORD_RESET
-}
-
-enum OtpType {
-  PASSWORD_RESET
-}
-
-// ==========================
-//         User Model
-// ==========================
-model User {
-  id              String    @id @default(uuid())
-  firstName       String
-  lastName        String
-  email           String    @unique
-  phone           String
-  password        String
-  isEmailVerified Boolean   @default(false)
-  isDisabled      Boolean   @default(false)
-  failedAttempts  Int       @default(0)
-  blockCount      Int       @default(0)
-  blockedUntil    DateTime?
-  role            String    @default("guest")
-  token           Token[]
-  otp             Otp[]
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-}
-
-// ==========================
-//         Token Model
-// ==========================
-model Token {
-  id        String    @id @default(uuid())
-  token     String?   @unique
-  tokenType TokenType
-  expiresAt DateTime
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-}
-
-// ==========================
-//          OTP Model
-// ==========================
-model Otp {
-  id        String   @id @default(uuid())
-  otp       Int?     @unique
-  otpType   OtpType
-  expiresAt DateTime
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
 // ==========================
 //          Image Upload
 // ==========================
 model Image {
   id        String   @id @default(uuid())
   key       String
-  url       String
-  filename  String
-  userId    Int
   createdAt DateTime @default(now())
 }

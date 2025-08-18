@@ -1,103 +1,159 @@
-import Image from "next/image";
+"use client";
+import React, { useState, useEffect } from "react";
 
-export default function Home() {
+export default function ImageUploader() {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [buckets, setBuckets] = useState<string[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [selectedBucket, setSelectedBucket] = useState("");
+  const [selectedFolder, setSelectedFolder] = useState("");
+  const [newFolderName, setNewFolderName] = useState("");
+
+  // Fetch all buckets
+  const fetchBuckets = async () => {
+    try {
+      const res = await fetch("http://localhost:8000/api/v1/show-all-buckets");
+      const data = await res.json();
+      setBuckets(data);
+    } catch (err) {
+      console.error(err);
+      alert("Failed to fetch buckets");
+    }
+  };
+
+  // Fetch folders whenever bucket changes
+  useEffect(() => {
+    const fetchFolders = async () => {
+      if (!selectedBucket) return;
+
+      try {
+        const res = await fetch(
+          `http://localhost:8000/api/v1/show-all-folders/${selectedBucket}`
+        );
+        const data = await res.json();
+        setFolders(data);
+        setSelectedFolder(""); // reset selected folder
+      } catch (err) {
+        console.error(err);
+        setFolders([]);
+        alert("Failed to fetch folders");
+      }
+    };
+
+    fetchFolders();
+  }, [selectedBucket]);
+
+  const handleUpload = async () => {
+    if (!file || !selectedBucket) {
+      alert("Select a file and a bucket first!");
+      return;
+    }
+
+    setUploading(true);
+
+    try {
+      const folderToUse = selectedFolder || newFolderName || undefined;
+
+      const presignRes = await fetch(
+        "http://localhost:8000/api/v1/generate-presigned-url",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            filetype: file.type,
+            bucketName: selectedBucket,
+            folderName: folderToUse,
+          }),
+        }
+      );
+
+      const data = await presignRes.json();
+      if (!presignRes.ok) throw new Error(data.message);
+
+      const putRes = await fetch(data.url, {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+
+      if (!putRes.ok) throw new Error("Upload failed");
+
+      alert(`✅ Upload Successful! File saved in: ${folderToUse || "root"}`);
+      setFile(null);
+      setNewFolderName("");
+      setSelectedFolder("");
+    } catch (err) {
+      console.error(err);
+      alert("❌ Upload Error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <div className="max-w-md mx-auto mt-10 p-6 bg-white shadow-lg rounded-lg border">
+      <h2 className="text-2xl font-bold mb-4 text-center">
+        📤 Wasabi Image Uploader
+      </h2>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+      <input
+        type="file"
+        accept="image/*"
+        onChange={(e) => e.target.files && setFile(e.target.files[0])}
+        className="mb-4 w-full"
+      />
+
+      <button
+        onClick={fetchBuckets}
+        className="mb-4 w-full py-2 px-4 bg-green-600 text-white rounded hover:bg-green-700"
+      >
+        Fetch Buckets
+      </button>
+
+      {buckets.length > 0 && (
+        <select
+          value={selectedBucket}
+          onChange={(e) => setSelectedBucket(e.target.value)}
+          className="mb-4 w-full p-2 border border-gray-300 rounded"
         >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+          <option value="">Select bucket</option>
+          {buckets.map((b) => (
+            <option key={b} value={b}>
+              {b}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Folder dropdown */}
+      {folders.length > 0 && (
+        <select
+          value={selectedFolder}
+          onChange={(e) => setSelectedFolder(e.target.value)}
+          className="mb-4 w-full p-2 border border-gray-300 rounded"
         >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+          <option value="">Upload to root</option>
+          {folders.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <button
+        onClick={handleUpload}
+        disabled={!file || !selectedBucket || uploading}
+        className={`w-full py-2 px-4 rounded ${
+          uploading
+            ? "bg-gray-400 cursor-not-allowed"
+            : "bg-blue-600 text-white hover:bg-blue-700"
+        }`}
+      >
+        {uploading ? "Uploading..." : "Upload"}
+      </button>
     </div>
   );
 }

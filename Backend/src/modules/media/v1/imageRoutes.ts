@@ -1,10 +1,14 @@
 import { Router } from "express";
-import { generatePresignedUrl, saveImageMetadata, generateReadUrl } from "./imageController";
+import {
+  generatePresignedUrl,
+  getAllBuckets,
+  getAllFoldersInBucket,
+} from "./imageController";
 
 const router = Router();
 
+router.get("/show-all-buckets", getAllBuckets);
 router.post("/generate-presigned-url", generatePresignedUrl);
-router.post("/save-image", saveImageMetadata);
-router.get("/generate-read-url/:key", generateReadUrl);
+router.get("/show-all-folders/:bucketName", getAllFoldersInBucket);
 
 export default router;

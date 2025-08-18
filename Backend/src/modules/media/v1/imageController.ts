@@ -1,69 +1,76 @@
 import { Request, Response } from "express";
 import { s3 } from "../../../config/wasabi";
-import { PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  PutObjectCommand,
+  ListBucketsCommand,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PrismaClient } from "@prisma/client";
+import crypto from "crypto";
 
-const prisma = new PrismaClient();
-const BUCKET = process.env.WASABI_BUCKET!;
+// ✅ Get all buckets
+export const getAllBuckets = async (req: Request, res: Response) => {
+  try {
+    const response = await s3.send(new ListBucketsCommand({}));
+    const buckets = response.Buckets?.map((b) => b.Name) || [];
+    return res.json(buckets);
+  } catch (err) {
+    console.error("❌ Failed to fetch buckets:", err);
+    return res.status(500).json({ message: "Failed to fetch buckets" });
+  }
+};
 
-// Generate presigned upload URL (PUT)
+export const getAllFoldersInBucket = async (req: Request, res: Response) => {
+  const { bucketName } = req.params;
+  try {
+    const command = new ListObjectsV2Command({
+      Bucket: bucketName,
+      Delimiter: "/",
+    });
+    const response = await s3.send(command);
+    const folders = response.CommonPrefixes?.map((cp) => cp.Prefix) || [];
+    return res.json(folders);
+  } catch (err) {
+    console.error("❌ Failed to fetch folders:", err);
+    return res.status(500).json({ message: "Failed to fetch folders" });
+  }
+};
+
+// ✅ Generate presigned URL
 export const generatePresignedUrl = async (req: Request, res: Response) => {
   try {
-    const { filename, filetype } = req.body;
+    const { filename, bucketName, folderName, filetype } = req.body;
 
-    if (!filename || !filetype) {
+    if (!filename || !bucketName) {
       return res
         .status(400)
-        .json({ message: "Filename and filetype are required." });
+        .json({ message: "Filename and bucketName are required." });
     }
 
-    const key = `${Date.now()}-${filename}`;
+    const uniqueKey = crypto.randomBytes(16).toString("hex");
+
+    const cleanedFolderName =
+      folderName && folderName.endsWith("/")
+        ? folderName.slice(0, -1)
+        : folderName;
+
+    const objectKey = cleanedFolderName
+      ? `${cleanedFolderName}/${uniqueKey}-${filename}`
+      : `${uniqueKey}-${filename}`;
 
     const command = new PutObjectCommand({
-      Bucket: BUCKET,
-      Key: key,
-      ContentType: filetype,
+      Bucket: bucketName,
+      Key: objectKey,
+      ContentType: req.body.filetype || "application/octet-stream",
     });
 
-    const url = await getSignedUrl(s3, command, { expiresIn: 300 });
+    const url = await getSignedUrl(s3, command, { expiresIn: 60 });
 
-    return res.status(200).json({ key, url });
+    return res.status(200).json({ url, key: objectKey, bucketName });
   } catch (error) {
-    console.error("Error generating upload URL:", error);
-    return res.status(500).json({ message: "Failed to generate upload URL." });
+    console.error("❌ Presigned URL error:", error);
+    return res
+      .status(500)
+      .json({ message: "Failed to generate presigned URL" });
   }
-};
-
-// Save image metadata to DB
-export const saveImageMetadata = async (req: Request, res: Response) => {
-  try {
-    const { key, url, userId, filename } = req.body;
-
-    if (!key || !url || !userId || !filename) {
-      return res
-        .status(400)
-        .json({ message: "key, url, userId, and filename are required" });
-    }
-
-    const image = await prisma.image.create({
-      data: { key, url, userId, filename },
-    });
-
-    res.json({ message: "Image metadata saved", image });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to save image metadata" });
-  }
-};
-
-// Generate presigned read URL (GET)
-export const generateReadUrl = async (req: Request, res: Response) => {
-  const { key } = req.params;
-  const command = new GetObjectCommand({
-    Bucket: process.env.WASABI_BUCKET,
-    Key: key
-  });
-  const url = await getSignedUrl(s3, command, { expiresIn: 60 * 10 }); 
-  res.json({ url });
 };
