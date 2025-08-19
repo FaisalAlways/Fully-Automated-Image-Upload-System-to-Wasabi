@@ -13,5 +13,9 @@ datasource db {
 model Image {
   id        String   @id @default(uuid())
   key       String
+  bucket    String
+  folder    String?
+  size      Int
+  filetype  String?
   createdAt DateTime @default(now())
 }
