@@ -18,4 +18,5 @@ model Image {
   size      Int
   filetype  String?
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

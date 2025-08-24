@@ -6,8 +6,8 @@ import mainRouter from "./routes";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 9000;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:3000";
+const PORT = process.env.PORT || 8000;
+const CLIENT_ORIGIN = process.env.CLIENT_URL || "http://localhost:3000";
 
 // Middleware
 app.use(
@@ -20,6 +20,9 @@ app.use(
 );
 app.use(express.json());
 
+app.get("/", (_req, res) => {
+  res.send("Hello from TypeScript + Node.js!");
+});
 // Routes
 app.use("/", mainRouter);
 
